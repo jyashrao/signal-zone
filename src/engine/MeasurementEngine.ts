@@ -12,10 +12,14 @@ class MeasurementEngine {
   public async measure(): Promise<NetworkData> {
     const startTime = performance.now();
     try {
-      // Use index.html as a resource to fetch for latency measurement
-      await fetch("/index.html", { cache: "no-store", method: "HEAD" });
+      // Use dynamic origin to ensure it works on any host (IP, localhost, etc.) via HTTPS/HTTP
+      await fetch(window.location.origin + "/index.html", { 
+        cache: "no-store", 
+        method: "HEAD",
+        mode: "same-origin" // Ensure it targets the same server
+      });
     } catch (error) {
-      console.error("Measurement failed:", error);
+      // Silently fail to avoid console spam during connection issues or certificate warnings
     }
     const latency = performance.now() - startTime;
 

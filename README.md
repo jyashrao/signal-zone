@@ -1,6 +1,27 @@
-# React + TypeScript + Vite
+# Signal Zone
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+Real-time network quality visualizer with spatial mapping.
+
+## Development
+
+### Running on Mobile (Required for Sensors)
+
+The mapping system requires **HTTPS** and a **Secure Context** to access motion and orientation sensors on mobile devices.
+
+1.  Start the development server:
+    ```bash
+    npm run dev
+    ```
+2.  Look for the **Network** URL in the terminal (e.g., `https://192.168.1.x:5173`).
+3.  Open this URL on your mobile browser.
+4.  **Accept the Certificate Warning:** Since we use a self-signed certificate for local development, your browser will show a security warning.
+    -   On **Chrome/Android**: Tap "Advanced" and then "Proceed to [IP] (unsafe)".
+    -   On **Safari/iOS**: Tap "Show Details" and then "Visit this website".
+5.  Tap **"Enable Sensors"** on the landing screen to start mapping.
+
+---
+
+# React + TypeScript + Vite
 
 Currently, two official plugins are available:
 

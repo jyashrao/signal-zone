@@ -2,12 +2,18 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import { VitePWA } from "vite-plugin-pwa";
+import basicSsl from "@vitejs/plugin-basic-ssl";
 
 // https://vitejs.dev/config/
 export default defineConfig({
+  server: {
+    host: true, // Listen on all network interfaces
+    https: true, // Enable HTTPS
+  },
   plugins: [
     react(),
     tailwindcss(),
+    basicSsl(), // Automatically generate a local self-signed certificate
     VitePWA({
       registerType: "autoUpdate",
       includeAssets: ["favicon.ico", "icon-192.svg", "icon-512.svg"],

@@ -1,17 +1,16 @@
 import { useEffect, useRef } from "react";
-import { KalmanFilter } from "../filters/KalmanFilter";
-import { getPoints, getCursor, getBestPoint } from "../engine/signalTrail";
+import { getCursor } from "../engine/signalTrail";
 import { signalField } from "../engine/SignalField";
 import type { SignalTrend } from "../engine/TrendAnalyzer";
 
 interface Props {
   nqi: number;
   trend?: SignalTrend;
+  heading?: number;
 }
 
-export default function BackgroundCanvas({ nqi, trend = "stable" }: Props) {
+export default function BackgroundCanvas({ nqi, heading = 0 }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const hueFilter = useRef(new KalmanFilter(0.005, 0.5)); // Very smooth transition for visuals
   const requestRef = useRef<number>(0);
 
   useEffect(() => {
@@ -28,196 +27,108 @@ export default function BackgroundCanvas({ nqi, trend = "stable" }: Props) {
     window.addEventListener("resize", resize);
     resize();
 
-    const getInterpolatedColor = (val: number) => {
-      // 70–100 → Green (0, 255, 120)
-      // 40–70 → Yellow (255, 200, 0)
-      // 0–40 → Red (255, 80, 80)
-      if (val >= 70) return "0, 255, 120";
-      if (val >= 40) {
-        const t = (val - 40) / 30;
-        const r = Math.round(255 * (1 - t) + 0 * t);
-        const g = Math.round(200 * (1 - t) + 255 * t);
-        const b = Math.round(0 * (1 - t) + 120 * t);
-        return `${r}, ${g}, ${b}`;
-      }
-      const t = Math.max(0, val) / 40;
-      const r = 255;
-      const g = Math.round(80 * (1 - t) + 200 * t);
-      const b = Math.round(80 * (1 - t) + 0 * t);
-      return `${r}, ${g}, ${b}`;
+    const getHexColor = (val: number) => {
+      if (val >= 70) return "#00ff78"; // Green
+      if (val >= 40) return "#ffc800"; // Yellow
+      return "#ff5050"; // Red
     };
 
     const render = () => {
-      const now = Date.now();
-      const time = now / 1000;
-      
-      // 1. Logic Update
-      signalField.step();
-
-      // Interpolate hue based on nqi
-      const targetHue = Math.max(0, Math.min(120, nqi * 1.2));
-      const currentHue = hueFilter.current.filter(targetHue);
-
-      // 2. Clear & Base Layer
-      ctx.globalCompositeOperation = "source-over";
-      ctx.fillStyle = "rgba(0, 0, 0, 0.18)"; 
+      // 1. Clear Screen
+      ctx.fillStyle = "#0a0a0a";
       ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-      // Subtle Background Tint with organic pulse
-      const bgPulse = Math.sin(time * 0.5) * 0.03;
-      const gradient = ctx.createRadialGradient(
-        canvas.width / 2, canvas.height / 2, 0,
-        canvas.width / 2, canvas.height / 2, canvas.width
-      );
-      gradient.addColorStop(0, `hsla(${currentHue}, 45%, 12%, ${0.12 + bgPulse})`);
-      gradient.addColorStop(1, "hsla(0, 0%, 4%, 0.12)");
-
-      ctx.fillStyle = gradient;
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-      // 3. Shared Variables for Rendering
-      const cursor = getCursor();
-      const curX = cursor.x * canvas.width;
-      const curY = cursor.y * canvas.height;
+      // 2. Map Dimensions
       const grid = signalField.getGrid();
       const { rows, cols } = signalField.getDimensions();
       const cellW = canvas.width / cols;
       const cellH = canvas.height / rows;
-      
-      // Base radius for heatmap cells
-      const baseRadius = Math.max(cellW, cellH) * 2.8;
 
-      // Use additive blending for signal elements
-      ctx.globalCompositeOperation = "lighter";
-
-      // 4. Render Signal Field (Flowing Heatmap)
+      // 3. Render Visited Grid Cells
       for (let r = 0; r < rows; r++) {
         for (let c = 0; c < cols; c++) {
           const cell = grid[r][c];
-          if (cell.intensity <= 0.01) continue;
+          if (!cell.visited) continue;
 
-          const centerX = (c + 0.5) * cellW;
-          const centerY = (r + 0.5) * cellH;
-
-          // A. Organic Drift (Noise-like movement)
-          const driftX = Math.sin(time * 0.8 + r * 0.5) * 12;
-          const driftY = Math.cos(time * 0.7 + c * 0.5) * 12;
-
-          // B. Trend-based Flow (Expansion/Contraction)
-          const dx = centerX - curX;
-          const dy = centerY - curY;
-          const dist = Math.sqrt(dx * dx + dy * dy);
-          
-          let flowX = 0;
-          let flowY = 0;
-          if (trend !== "stable") {
-            const force = (trend === "up" ? 1 : -1) * Math.min(25, 1500 / (dist + 40));
-            const flowPulse = Math.sin(time * 2 - dist / 100);
-            const angle = Math.atan2(dy, dx);
-            flowX = Math.cos(angle) * force * flowPulse;
-            flowY = Math.sin(angle) * force * flowPulse;
-          }
-
-          // C. Global "Living" Movement (Rising/Sinking)
-          const verticalShift = (trend === "up" ? -15 : (trend === "down" ? 10 : 0)) * Math.sin(time);
-
-          const finalX = centerX + driftX + flowX;
-          const finalY = centerY + driftY + flowY + verticalShift;
-
-          // D. Ripple Effect (Intensity modulation)
-          const rippleScale = trend === "up" ? 1.4 : (trend === "down" ? 0.7 : 1.0);
-          const ripple = Math.sin(dist / 50 - time * 4) * (0.08 * rippleScale);
-          
-          const color = getInterpolatedColor(cell.nqi);
-          const alpha = Math.max(0, (cell.intensity + ripple) * (trend === "down" ? 0.25 : 0.4));
-          const dynamicRadius = baseRadius * (1 + ripple * 0.3) * (trend === "up" ? 1.1 : 1.0);
-
-          const cellGradient = ctx.createRadialGradient(
-            finalX, finalY, 0,
-            finalX, finalY, dynamicRadius
-          );
-          
-          cellGradient.addColorStop(0, `rgba(${color}, ${alpha})`);
-          cellGradient.addColorStop(0.4, `rgba(${color}, ${alpha * 0.3})`);
-          cellGradient.addColorStop(1, "rgba(0, 0, 0, 0)");
-
-          ctx.fillStyle = cellGradient;
-          ctx.fillRect(finalX - dynamicRadius, finalY - dynamicRadius, dynamicRadius * 2, dynamicRadius * 2);
+          ctx.fillStyle = getHexColor(cell.avgNqi);
+          // Draw with 1px gap for grid feel
+          ctx.fillRect(c * cellW + 0.5, r * cellH + 0.5, cellW - 1, cellH - 1);
         }
       }
 
-      // 5. Render historical trail - subtle points
-      const points = getPoints();
-      const life = 12000;
-
-      points.forEach((point) => {
-        const age = now - point.timestamp;
-        if (age > life) return;
-
-        // Points also drift slightly
-        const pDriftX = Math.sin(time + point.y * 10) * 5;
-        const pDriftY = Math.cos(time + point.x * 10) * 5;
+      // 4. Render BEST Signal Highlight
+      const best = signalField.getBestSignal();
+      if (best && best.nqi > 0) {
+        const bX = (best.c + 0.5) * cellW;
+        const bY = (best.r + 0.5) * cellH;
         
-        const x = point.x * canvas.width + pDriftX;
-        const y = point.y * canvas.height + pDriftY;
-        const alpha = (1 - age / life) * 0.06;
-        const color = getInterpolatedColor(point.nqi);
-        const pRadius = (15 + (point.nqi / 100) * 30) * (1 + Math.sin(time * 2 + age / 1000) * 0.1);
-
-        const glowGradient = ctx.createRadialGradient(x, y, 0, x, y, pRadius);
-        glowGradient.addColorStop(0, `rgba(${color}, ${alpha})`);
-        glowGradient.addColorStop(1, `rgba(${color}, 0)`);
-
-        ctx.fillStyle = glowGradient;
-        ctx.beginPath();
-        ctx.arc(x, y, pRadius, 0, Math.PI * 2);
-        ctx.fill();
-      });
-
-      // 6. Render BEST signal indicator
-      const bestPoint = getBestPoint();
-      if (bestPoint && bestPoint.nqi > 50) {
-        const bX = bestPoint.x * canvas.width;
-        const bY = bestPoint.y * canvas.height;
-        const pulseVal = Math.sin(time * 3) * 12;
-        const outerRadius = 75 + pulseVal;
+        // Pulsing Gold Glow
+        const pulse = Math.sin(Date.now() / 400) * 5;
+        const radius = Math.max(cellW, cellH) * 1.2 + pulse;
         
-        const bestGradient = ctx.createRadialGradient(bX, bY, 0, bX, bY, outerRadius);
-        bestGradient.addColorStop(0, "rgba(0, 255, 120, 0.12)");
-        bestGradient.addColorStop(1, "rgba(0, 255, 120, 0)");
-
-        ctx.fillStyle = bestGradient;
+        const bestGlow = ctx.createRadialGradient(bX, bY, 0, bX, bY, radius);
+        bestGlow.addColorStop(0, "rgba(255, 215, 0, 0.6)");
+        bestGlow.addColorStop(1, "rgba(255, 215, 0, 0)");
+        
+        ctx.fillStyle = bestGlow;
         ctx.beginPath();
-        ctx.arc(bX, bY, outerRadius, 0, Math.PI * 2);
+        ctx.arc(bX, bY, radius, 0, Math.PI * 2);
         ctx.fill();
+
+        // Small gold core star/dot
+        ctx.fillStyle = "#ffd700";
+        ctx.shadowBlur = 15;
+        ctx.shadowColor = "#ffd700";
+        ctx.beginPath();
+        ctx.arc(bX, bY, 3, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.shadowBlur = 0;
       }
 
-      // 7. Render CURRENT signal glow (User Anchor)
-      const curColor = getInterpolatedColor(nqi);
-      const trendScale = trend === "up" ? 1.5 : (trend === "down" ? 0.6 : 1.0);
-      const pulseFreq = trend === "up" ? 0.15 : (trend === "down" ? 0.8 : 0.4);
-      const pulseVal = Math.sin(now / (pulseFreq * 1000)) * (25 * trendScale);
+      // 5. Render User Position Pointer
+      const cursor = getCursor();
+      const curX = cursor.x * canvas.width;
+      const curY = cursor.y * canvas.height;
+
+      // Outer glow for pointer
+      const glow = ctx.createRadialGradient(curX, curY, 0, curX, curY, 20);
+      glow.addColorStop(0, "rgba(255, 255, 255, 0.4)");
+      glow.addColorStop(1, "rgba(255, 255, 255, 0)");
+      ctx.fillStyle = glow;
+      ctx.beginPath();
+      ctx.arc(curX, curY, 20, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Main pointer circle
+      ctx.fillStyle = "#ffffff";
+      ctx.shadowBlur = 10;
+      ctx.shadowColor = "#ffffff";
+      ctx.beginPath();
+      ctx.arc(curX, curY, 6, 0, Math.PI * 2);
+      ctx.fill();
       
-      const curRadius = (160 + (nqi / 100) * 220 + pulseVal) * trendScale;
-      const curIntensity = trend === "up" ? 0.5 : (trend === "down" ? 0.1 : 0.2);
-
-      const curGradient = ctx.createRadialGradient(curX, curY, 0, curX, curY, curRadius);
-      curGradient.addColorStop(0, `rgba(${curColor}, ${curIntensity})`);
-      curGradient.addColorStop(0.3, `rgba(${curColor}, ${curIntensity * 0.5})`);
-      curGradient.addColorStop(1, `rgba(${curColor}, 0)`);
-
-      ctx.fillStyle = curGradient;
+      // 5. Render Directional Arrow
+      ctx.save();
+      ctx.translate(curX, curY);
+      
+      // Corrected rotation: Invert the heading to match physical phone movement
+      // Heading 0 is North/Up, but Canvas 0 is Right/X+.
+      // Subtract PI/2 to align "Forward" with the top of the screen.
+      const correctedHeading = -heading;
+      ctx.rotate(correctedHeading - Math.PI / 2);
+      
+      ctx.fillStyle = "#ffffff";
       ctx.beginPath();
-      ctx.arc(curX, curY, curRadius, 0, Math.PI * 2);
+      ctx.moveTo(12, 0);      // Tip
+      ctx.lineTo(0, -5);      // Top back
+      ctx.lineTo(2, 0);       // Inner back
+      ctx.lineTo(0, 5);       // Bottom back
+      ctx.closePath();
       ctx.fill();
+      ctx.restore();
 
-      // 8. Render USER position anchor (The Core)
-      ctx.globalCompositeOperation = "source-over";
-      const corePulse = Math.sin(time * 10) * 1;
-      ctx.fillStyle = "rgba(255, 255, 255, 0.9)";
-      ctx.beginPath();
-      ctx.arc(curX, curY, 4 + corePulse, 0, Math.PI * 2);
-      ctx.fill();
+      // Reset shadow
+      ctx.shadowBlur = 0;
 
       requestRef.current = requestAnimationFrame(render);
     };
@@ -228,7 +139,7 @@ export default function BackgroundCanvas({ nqi, trend = "stable" }: Props) {
       window.removeEventListener("resize", resize);
       cancelAnimationFrame(requestRef.current);
     };
-  }, [nqi, trend]);
+  }, [nqi, heading]);
 
   return (
     <canvas
@@ -237,4 +148,3 @@ export default function BackgroundCanvas({ nqi, trend = "stable" }: Props) {
     />
   );
 }
-

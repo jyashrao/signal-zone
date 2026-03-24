@@ -1,83 +1,77 @@
 export interface GridCell {
-  nqi: number;
-  intensity: number; // 0 to 1, representing how "fresh" or "strong" the data is
-  lastUpdate: number;
+  avgNqi: number;
+  samples: number;
+  visited: boolean;
 }
 
 export class SignalField {
   private grid: GridCell[][];
   private readonly rows: number;
   private readonly cols: number;
-  private readonly decayRate = 0.00004; // Slightly slower decay for better heatmap trails
-  private readonly diffusionRadius = 2; // Increased for smoother spatial blending
+  private bestCell: { r: number, c: number, nqi: number } | null = null;
 
-  constructor(rows = 24, cols = 24) {
+  constructor(rows = 40, cols = 40) {
     this.rows = rows;
     this.cols = cols;
     this.grid = Array.from({ length: rows }, () =>
       Array.from({ length: cols }, () => ({
-        nqi: 0,
-        intensity: 0,
-        lastUpdate: Date.now(),
+        avgNqi: 0,
+        samples: 0,
+        visited: false,
       }))
     );
   }
 
   /**
    * Updates the grid based on a new measurement at a normalized (x, y) position.
+   * Uses a weighted running average to apply spatial smoothing to nearby cells.
    */
   public update(x: number, y: number, nqi: number): void {
     const col = Math.floor(x * (this.cols - 1));
     const row = Math.floor(y * (this.rows - 1));
-    const now = Date.now();
 
-    // Update the target cell and its immediate neighbors for a smoother field
-    for (let dr = -this.diffusionRadius; dr <= this.diffusionRadius; dr++) {
-      for (let dc = -this.diffusionRadius; dc <= this.diffusionRadius; dc++) {
+    const smoothingRadius = 3.5; // Influence radius in grid cells
+
+    for (let dr = -Math.ceil(smoothingRadius); dr <= Math.ceil(smoothingRadius); dr++) {
+      for (let dc = -Math.ceil(smoothingRadius); dc <= Math.ceil(smoothingRadius); dc++) {
         const r = row + dr;
         const c = col + dc;
 
         if (r >= 0 && r < this.rows && c >= 0 && c < this.cols) {
           const distance = Math.sqrt(dr * dr + dc * dc);
-          const weight = Math.max(0, 1 - distance / (this.diffusionRadius + 1));
+          if (distance > smoothingRadius) continue;
+
+          // Influence weight follows a quadratic decay for smoother gradients
+          const weight = Math.pow(1 - distance / smoothingRadius, 2);
           
           const cell = this.grid[r][c];
           
-          // Weighted average for NQI to smooth transitions
-          // If the cell is fresh (high intensity), we blend. If it's old, we overwrite more.
-          const blendFactor = 0.3 * weight;
-          cell.nqi = cell.nqi * (1 - blendFactor) + nqi * blendFactor;
-          
-          // Boost intensity (max 1.0)
-          cell.intensity = Math.min(1.0, cell.intensity + 0.4 * weight);
-          cell.lastUpdate = now;
+          // Apply weighted running average
+          // We treat the "influence" as a fractional sample
+          const totalWeight = cell.samples + weight;
+          if (totalWeight > 0) {
+            cell.avgNqi = (cell.avgNqi * cell.samples + nqi * weight) / totalWeight;
+            cell.samples = totalWeight;
+            cell.visited = true;
+          }
+
+          // Track best signal globally
+          if (!this.bestCell || cell.avgNqi > this.bestCell.nqi) {
+            this.bestCell = { r: r, c: c, nqi: cell.avgNqi };
+          }
         }
       }
     }
   }
 
+  public getBestSignal() {
+    return this.bestCell;
+  }
+
   /**
-   * Applies decay to all cells in the grid based on time elapsed.
+   * Persistent map - no decay needed
    */
   public step(): void {
-    const now = Date.now();
-    for (let r = 0; r < this.rows; r++) {
-      for (let c = 0; c < this.cols; c++) {
-        const cell = this.grid[r][c];
-        const elapsed = now - cell.lastUpdate;
-        
-        if (elapsed > 0) {
-          // Linear decay of intensity
-          cell.intensity = Math.max(0, cell.intensity - this.decayRate * elapsed);
-          cell.lastUpdate = now;
-          
-          // If intensity is zero, slowly reset NQI to 0 to clear the field
-          if (cell.intensity === 0) {
-            cell.nqi *= 0.95;
-          }
-        }
-      }
-    }
   }
 
   public getGrid(): GridCell[][] {
