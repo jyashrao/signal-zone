@@ -23,6 +23,9 @@ class MeasurementEngine {
     }
     const latency = performance.now() - startTime;
 
+
+
+    
     this.samples.push(latency);
     if (this.samples.length > this.maxSamples) {
       this.samples.shift();
