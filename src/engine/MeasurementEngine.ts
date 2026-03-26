@@ -26,11 +26,17 @@ class MeasurementEngine {
 
 
     
+
+
+
+
     this.samples.push(latency);
     if (this.samples.length > this.maxSamples) {
       this.samples.shift();
     }
 
+
+    
     const jitter = this.calculateJitter();
     const nqi = this.calculateNQI(latency, jitter);
     const status = this.getStatus(nqi);
